@@ -47,7 +47,11 @@ def send_email(to_email, subject, body):
 # ----------------------------
 def get_connection():
     DATABASE_URL = os.environ.get("DATABASE_URL")
-    return psycopg2.connect(DATABASE_URL)
+    return psycopg2.connect(
+        DATABASE_URL,
+        sslmode="require",
+        connect_timeout=5
+    )
 
 
 def init_db():
@@ -200,4 +204,6 @@ init_db()
 
 if __name__ == "__main__":
     app.run()
+
+
 
