@@ -17,27 +17,24 @@ app.secret_key = os.environ.get("SECRET_KEY", "fallback-secret-key")
 # EMAIL FUNCTION (SAFE)
 # ----------------------------
 def send_email(to_email, subject, body):
-    if not to_email:
-        return
-
-    sender_email = os.environ.get("EMAIL_USER")
-    app_password = os.environ.get("EMAIL_PASS")
-
-    if not sender_email or not app_password:
-        print("Email credentials missing")
-        return
-
     try:
+        sender_email = os.environ.get("EMAIL_USER")
+        app_password = os.environ.get("EMAIL_PASS")
+
+        if not sender_email or not app_password or not to_email:
+            return  # silently skip
+
         msg = MIMEText(body, "html")
         msg["Subject"] = subject
         msg["From"] = sender_email
         msg["To"] = to_email
 
-        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=10)
         server.starttls()
         server.login(sender_email, app_password)
         server.send_message(msg)
         server.quit()
+
     except Exception as e:
         print("Email error:", e)
 
@@ -204,6 +201,7 @@ def logout():
 
 if __name__ == "__main__":
     app.run()
+
 
 
 
