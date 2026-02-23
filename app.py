@@ -10,30 +10,40 @@ app = Flask(__name__)
 # ----------------------------
 # SECURITY CONFIG
 # ----------------------------
-app.secret_key = os.environ.get("SECRET_KEY")
+app.secret_key = os.environ.get("SECRET_KEY", "fallback-secret-key")
 
 
 # ----------------------------
-# EMAIL FUNCTION
+# EMAIL FUNCTION (SAFE)
 # ----------------------------
 def send_email(to_email, subject, body):
+    if not to_email:
+        return
+
     sender_email = os.environ.get("EMAIL_USER")
     app_password = os.environ.get("EMAIL_PASS")
 
-    msg = MIMEText(body, "html")
-    msg["Subject"] = subject
-    msg["From"] = sender_email
-    msg["To"] = to_email
+    if not sender_email or not app_password:
+        print("Email credentials missing")
+        return
 
-    server = smtplib.SMTP("smtp.gmail.com", 587)
-    server.starttls()
-    server.login(sender_email, app_password)
-    server.send_message(msg)
-    server.quit()
+    try:
+        msg = MIMEText(body, "html")
+        msg["Subject"] = subject
+        msg["From"] = sender_email
+        msg["To"] = to_email
+
+        server = smtplib.SMTP("smtp.gmail.com", 587)
+        server.starttls()
+        server.login(sender_email, app_password)
+        server.send_message(msg)
+        server.quit()
+    except Exception as e:
+        print("Email error:", e)
 
 
 # ----------------------------
-# DATABASE INITIALIZATION
+# DATABASE
 # ----------------------------
 def get_connection():
     DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -41,31 +51,32 @@ def get_connection():
 
 
 def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-    CREATE TABLE IF NOT EXISTS complaints (
-        id SERIAL PRIMARY KEY,
-        student_id TEXT,
-        student_email TEXT,
-        issue TEXT,
-        category TEXT,
-        priority TEXT,
-        timestamp TEXT,
-        status TEXT
-    )
-    """)
-
-    conn.commit()
-    conn.close()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+        CREATE TABLE IF NOT EXISTS complaints (
+            id SERIAL PRIMARY KEY,
+            student_id TEXT,
+            student_email TEXT,
+            issue TEXT,
+            category TEXT,
+            priority TEXT,
+            timestamp TEXT,
+            status TEXT
+        )
+        """)
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print("DB init error:", e)
 
 
 # ----------------------------
-# AI CLASSIFICATION LOGIC
+# AI CLASSIFICATION (SAFE)
 # ----------------------------
 def analyze_issue(text):
-    text = text.lower()
+    text = (text or "").lower()
 
     if any(word in text for word in ["ragging", "harassment", "threat"]):
         return "CRITICAL - Security Cell", "Priority 1"
@@ -92,58 +103,49 @@ def home():
 def submit():
     student_id = request.form.get('student_id') or "Anonymous"
     student_email = request.form.get('student_email')
-    issue_text = request.form.get('issue')
+    issue_text = request.form.get('issue', '').strip()
+
+    if not issue_text:
+        return "Issue cannot be empty", 400
 
     category, priority = analyze_issue(issue_text)
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
-    conn = get_connection()
-    cursor = conn.cursor()
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute("""
+        INSERT INTO complaints (student_id, student_email, issue, category, priority, timestamp, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        RETURNING id
+        """, (student_id, student_email, issue_text, category, priority, timestamp, "Pending"))
 
-    cursor.execute('''
-    INSERT INTO complaints (student_id, student_email, issue, category, priority, timestamp, status)
-    VALUES (%s, %s, %s, %s, %s, %s, %s)
-    RETURNING id
-    ''', (student_id, student_email, issue_text, category, priority, timestamp, "Pending"))
+        complaint_id = cursor.fetchone()[0]
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        return f"Database error: {e}", 500
 
-    complaint_id = cursor.fetchone()[0]
-    conn.commit()
-    conn.close()
-
-    # Send email to admin
     admin_email = os.environ.get("ADMIN_EMAIL")
-
-    subject = f"New Complaint Registered (ID {complaint_id})"
-    body = f"""
-    <html>
-    <body style="font-family: Arial;">
-    <h2 style="color:#d81b60;">New Grievance Registered</h2>
-    <p><strong>Complaint ID:</strong> {complaint_id}</p>
-    <p><strong>Student ID:</strong> {student_id}</p>
-    <p><strong>Category:</strong> {category}</p>
-    <p><strong>Priority:</strong> {priority}</p>
-    <p><strong>Time:</strong> {timestamp}</p>
-    <hr>
-    <p><strong>Issue:</strong><br>{issue_text}</p>
-    </body>
-    </html>
-    """
-
-    send_email(admin_email, subject, body)
+    send_email(
+        admin_email,
+        f"New Complaint Registered (ID {complaint_id})",
+        f"<p><strong>Issue:</strong><br>{issue_text}</p>"
+    )
 
     return redirect('/')
 
 
 @app.route('/admin_login', methods=['POST'])
 def admin_login():
-    username = request.form['username']
-    password = request.form['password']
+    username = request.form.get('username')
+    password = request.form.get('password')
 
     if username == os.environ.get("ADMIN_USER") and password == os.environ.get("ADMIN_PASS"):
         session['admin'] = True
         return redirect('/dashboard')
-    else:
-        return "Invalid Login"
+
+    return "Invalid Login", 401
 
 
 @app.route('/dashboard')
@@ -162,7 +164,6 @@ def dashboard():
 
 @app.route('/resolve/<int:complaint_id>')
 def resolve_complaint(complaint_id):
-
     if not session.get('admin'):
         return redirect('/')
 
@@ -177,19 +178,11 @@ def resolve_complaint(complaint_id):
     conn.close()
 
     if result and result[0]:
-        student_email = result[0]
-
-        subject = f"Complaint ID {complaint_id} Resolved"
-        body = f"""
-        <html>
-        <body style="font-family: Arial;">
-            <h2 style="color:green;">Your Complaint Has Been Resolved</h2>
-            <p>Your grievance (ID {complaint_id}) has been successfully resolved.</p>
-        </body>
-        </html>
-        """
-
-        send_email(student_email, subject, body)
+        send_email(
+            result[0],
+            f"Complaint {complaint_id} Resolved",
+            "<p>Your complaint has been resolved.</p>"
+        )
 
     return redirect('/dashboard')
 
@@ -200,9 +193,11 @@ def logout():
     return redirect('/')
 
 
-# Initialize DB on startup
+# ----------------------------
+# STARTUP
+# ----------------------------
 init_db()
-
 
 if __name__ == "__main__":
     app.run()
+
