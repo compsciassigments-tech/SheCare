@@ -2,33 +2,40 @@ from flask import Flask, render_template, request, redirect, session
 import datetime
 import os
 import sqlite3
-import smtplib
-from email.mime.text import MIMEText
+
+# ----------------------------
+# SENDGRID IMPORTS
+# ----------------------------
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "fallback-secret-key")
 
 # ----------------------------
-# EMAIL FUNCTION
+# EMAIL FUNCTION (SENDGRID)
 # ----------------------------
 def send_email(to_email, subject, body):
+    if not to_email:
+        return
+
+    sender_email = os.environ.get("EMAIL_USER")  # verified sender in SendGrid
+    sendgrid_api_key = os.environ.get("SENDGRID_API_KEY")
+
+    if not sender_email or not sendgrid_api_key:
+        print("SendGrid credentials missing")
+        return
+
     try:
-        sender_email = os.environ.get("EMAIL_USER")
-        app_password = os.environ.get("EMAIL_PASS")
-
-        if not sender_email or not app_password or not to_email:
-            return
-
-        msg = MIMEText(body, "html")
-        msg["Subject"] = subject
-        msg["From"] = sender_email
-        msg["To"] = to_email
-
-        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=10)
-        server.starttls()
-        server.login(sender_email, app_password)
-        server.send_message(msg)
-        server.quit()
+        message = Mail(
+            from_email=sender_email,
+            to_emails=to_email,
+            subject=subject,
+            html_content=body
+        )
+        sg = SendGridAPIClient(sendgrid_api_key)
+        response = sg.send(message)
+        print(f"Email sent to {to_email}, status {response.status_code}")
     except Exception as e:
         print("Email error:", e)
 
@@ -151,16 +158,17 @@ def resolve_complaint(complaint_id):
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("UPDATE complaints SET status='Resolved' WHERE id=?", (complaint_id,))
-    cursor.execute("SELECT student_email FROM complaints WHERE id=?", (complaint_id,))
+    cursor.execute("SELECT student_email, issue FROM complaints WHERE id=?", (complaint_id,))
     result = cursor.fetchone()
     conn.commit()
     conn.close()
 
     if result and result[0]:
+        # Include original complaint in the email
         send_email(
             result[0],
             f"Complaint {complaint_id} Resolved",
-            "<p>Your complaint has been resolved.</p>"
+            f"<p>Your complaint has been resolved.</p><p><strong>Issue:</strong> {result[1]}</p>"
         )
 
     return redirect('/dashboard')
@@ -177,8 +185,4 @@ init_db()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
-
-
-
-
 
