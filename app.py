@@ -22,7 +22,7 @@ def send_email(to_email, subject, body):
         app_password = os.environ.get("EMAIL_PASS")
 
         if not sender_email or not app_password or not to_email:
-            return  # silently skip
+            return
 
         msg = MIMEText(body, "html")
         msg["Subject"] = subject
@@ -40,54 +40,32 @@ def send_email(to_email, subject, body):
 
 
 # ----------------------------
-# DATABASE
+# DATABASE (BULLETPROOF)
 # ----------------------------
 def get_connection():
-    DATABASE_URL = os.environ.get("DATABASE_URL")
-    return psycopg2.connect(
-        DATABASE_URL,
-        sslmode="require",
-        connect_timeout=5
-    )
-
-
-def init_db():
     try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("""
-        CREATE TABLE IF NOT EXISTS complaints (
-            id SERIAL PRIMARY KEY,
-            student_id TEXT,
-            student_email TEXT,
-            issue TEXT,
-            category TEXT,
-            priority TEXT,
-            timestamp TEXT,
-            status TEXT
+        return psycopg2.connect(
+            os.environ.get("DATABASE_URL"),
+            sslmode="require",
+            connect_timeout=5
         )
-        """)
-        conn.commit()
-        conn.close()
     except Exception as e:
-        print("DB init error:", e)
+        print("Database error:", e)
+        return None
 
 
 # ----------------------------
-# AI CLASSIFICATION (SAFE)
+# AI CLASSIFICATION
 # ----------------------------
 def analyze_issue(text):
     text = (text or "").lower()
 
     if any(word in text for word in ["ragging", "harassment", "threat"]):
         return "CRITICAL - Security Cell", "Priority 1"
-
     elif any(word in text for word in ["fan", "water", "washroom", "bench", "light"]):
         return "Infrastructure", "Priority 2"
-
     elif any(word in text for word in ["exam", "marks", "fee", "syllabus", "hall ticket"]):
         return "Academic Affairs", "Priority 3"
-
     else:
         return "General Administration", "Priority 4"
 
@@ -112,24 +90,31 @@ def submit():
     category, priority = analyze_issue(issue_text)
     timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
 
+    conn = get_connection()
+    if not conn:
+        return "Database temporarily unavailable. Please try again later."
+
     try:
-        conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("""
-        INSERT INTO complaints (student_id, student_email, issue, category, priority, timestamp, status)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
-        RETURNING id
+            INSERT INTO complaints
+            (student_id, student_email, issue, category, priority, timestamp, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
         """, (student_id, student_email, issue_text, category, priority, timestamp, "Pending"))
 
         complaint_id = cursor.fetchone()[0]
         conn.commit()
-        conn.close()
-    except Exception as e:
-        return f"Database error: {e}", 500
 
-    admin_email = os.environ.get("ADMIN_EMAIL")
+    except Exception as e:
+        print("Insert error:", e)
+        return "Something went wrong while submitting your complaint."
+
+    finally:
+        conn.close()
+
     send_email(
-        admin_email,
+        os.environ.get("ADMIN_EMAIL"),
         f"New Complaint Registered (ID {complaint_id})",
         f"<p><strong>Issue:</strong><br>{issue_text}</p>"
     )
@@ -139,14 +124,14 @@ def submit():
 
 @app.route('/admin_login', methods=['POST'])
 def admin_login():
-    username = request.form.get('username')
-    password = request.form.get('password')
-
-    if username == os.environ.get("ADMIN_USER") and password == os.environ.get("ADMIN_PASS"):
+    if (
+        request.form.get('username') == os.environ.get("ADMIN_USER") and
+        request.form.get('password') == os.environ.get("ADMIN_PASS")
+    ):
         session['admin'] = True
         return redirect('/dashboard')
 
-    return "Invalid Login", 401
+    return "Invalid login", 401
 
 
 @app.route('/dashboard')
@@ -155,10 +140,18 @@ def dashboard():
         return redirect('/')
 
     conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM complaints ORDER BY id DESC")
-    complaints = cursor.fetchall()
-    conn.close()
+    if not conn:
+        return "Database temporarily unavailable. Please refresh."
+
+    try:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM complaints ORDER BY id DESC")
+        complaints = cursor.fetchall()
+    except Exception as e:
+        print("Dashboard error:", e)
+        return "Unable to load complaints."
+    finally:
+        conn.close()
 
     return render_template("dashboard.html", complaints=complaints)
 
@@ -169,14 +162,20 @@ def resolve_complaint(complaint_id):
         return redirect('/')
 
     conn = get_connection()
-    cursor = conn.cursor()
+    if not conn:
+        return "Database temporarily unavailable."
 
-    cursor.execute("UPDATE complaints SET status='Resolved' WHERE id=%s", (complaint_id,))
-    cursor.execute("SELECT student_email FROM complaints WHERE id=%s", (complaint_id,))
-    result = cursor.fetchone()
-
-    conn.commit()
-    conn.close()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("UPDATE complaints SET status='Resolved' WHERE id=%s", (complaint_id,))
+        cursor.execute("SELECT student_email FROM complaints WHERE id=%s", (complaint_id,))
+        result = cursor.fetchone()
+        conn.commit()
+    except Exception as e:
+        print("Resolve error:", e)
+        return "Could not resolve complaint."
+    finally:
+        conn.close()
 
     if result and result[0]:
         send_email(
@@ -192,15 +191,6 @@ def resolve_complaint(complaint_id):
 def logout():
     session.pop('admin', None)
     return redirect('/')
-
-
-# ----------------------------
-# STARTUP
-# ----------------------------
-
-
-if __name__ == "__main__":
-    app.run()
 
 
 
