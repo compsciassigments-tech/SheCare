@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>SheCare - Grievance Portal</title>
+    <style>
+        body {
+            font-family: Arial;
+            background: linear-gradient(to right, #f8bbd0, #fce4ec);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+
+        .main-container {
+            display: flex;
+            gap: 40px;
+        }
+
+        .card {
+            background: white;
+            padding: 30px;
+            width: 350px;
+            border-radius: 10px;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+        }
+
+        h2 {
+            text-align: center;
+            color: #d81b60;
+        }
+
+        input, textarea {
+            width: 100%;
+            padding: 8px;
+            margin: 8px 0;
+        }
+
+        button {
+            width: 100%;
+            padding: 10px;
+            background: #d81b60;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #ad1457;
+        }
+
+        .admin-title {
+            color: #3f51b5;
+        }
+    </style>
+</head>
+<body>
+
+<div class="main-container">
+
+    <!-- STUDENT PORTAL -->
+    <div class="card">
+        <h2>Student Grievance</h2>
+
+        <form action="/submit" method="POST">
+            <label>Student ID (Optional)</label>
+            <input type="text" name="student_id">
+            
+            <label>Email (Required)</label>
+            <input type="email" name="student_email" placeholder="Enter Email" required>
+            
+             <label>Describe Issue</label>
+            <textarea name="issue" rows="4" required></textarea>
+
+            <button type="submit">Submit Complaint</button>
+        </form>
+    </div>
+
+    <!-- ADMIN LOGIN -->
+    <div class="card">
+        <h2 class="admin-title">Admin Login</h2>
+
+        <form action="/admin_login" method="POST">
+            <label>Username</label>
+            <input type="text" name="username" required>
+
+            <label>Password</label>
+            <input type="password" name="password" required>
+
+            <button type="submit">Login</button>
+        </form>
+    </div>
+
+</div>
+
+</body>
+</html>
